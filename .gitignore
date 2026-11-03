@@ -1,0 +1,28 @@
+# IDE
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.rsuser
+
+# Build output
+bin/
+obj/
+out/
+publish/
+artifacts/
+
+# Test results / coverage
+TestResults/
+coverage/
+*.coverage
+*.cobertura.xml
+
+# Local secrets / environment
+.env
+appsettings.*.local.json
+
+# OS
+.DS_Store
+Thumbs.db
