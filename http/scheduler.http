@@ -1,0 +1,16 @@
+# Client stub (SPEC §9). Works with Visual Studio, Rider and the VS Code REST Client.
+# docker compose → 8080; dotnet run (launchSettings "http") → 5080
+@baseUrl = http://localhost:8080
+
+### Liveness
+GET {{baseUrl}}/health/live
+
+### Readiness (includes database)
+GET {{baseUrl}}/health/ready
+
+### OpenAPI document
+GET {{baseUrl}}/openapi/v1.json
+
+### Correlation id is echoed back
+GET {{baseUrl}}/health/live
+X-Correlation-Id: demo-request-001

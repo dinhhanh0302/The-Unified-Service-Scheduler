@@ -1,0 +1,25 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Scheduler.Domain/Scheduler.Domain.csproj" />
+    <Project Path="src/Scheduler.Application/Scheduler.Application.csproj" />
+    <Project Path="src/Scheduler.Infrastructure/Scheduler.Infrastructure.csproj" />
+    <Project Path="src/Scheduler.Api/Scheduler.Api.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Scheduler.UnitTests/Scheduler.UnitTests.csproj" />
+    <Project Path="tests/Scheduler.IntegrationTests/Scheduler.IntegrationTests.csproj" />
+  </Folder>
+  <Folder Name="/Solution Items/">
+    <File Path="SPEC.md" />
+    <File Path="AGENTS.md" />
+    <File Path="README.md" />
+    <File Path="Directory.Build.props" />
+    <File Path="Directory.Packages.props" />
+    <File Path="global.json" />
+    <File Path="docker-compose.yml" />
+  </Folder>
+  <Folder Name="/docs/">
+    <File Path="docs/system-design.md" />
+    <File Path="docs/ai-collaboration-log.md" />
+  </Folder>
+</Solution>

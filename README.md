@@ -3,9 +3,9 @@
 Backend API for booking dealership service appointments with real-time bay and technician
 availability (Keyloop Technical Assessment, Scenario A).
 
-> **Status:** specification only. No code yet. Implementation follows `SPEC.md` §13, one commit per step.
+> **Status:** step 1 of `SPEC.md` §13 (solution skeleton). Business endpoints arrive in later steps.
 
-## Repository contents (this commit)
+## Repository contents
 | File | Purpose |
 |---|---|
 | `SPEC.md` | Source of truth: scope, business rules, acceptance criteria, API contract, NFRs, plan, assumptions, open questions |
@@ -18,8 +18,37 @@ availability (Keyloop Technical Assessment, Scenario A).
 AutoMapper (Api layer only), Serilog, OpenTelemetry, xUnit + Testcontainers, Docker Compose.
 Details and justifications: `SPEC.md` §3.
 
-## Build, run and test
-_Added in step 1 of `SPEC.md` §13._
+## Prerequisites
+- .NET 10 SDK
+- Docker Desktop (for `docker compose` and the Testcontainers integration tests)
+
+## Build
+```bash
+dotnet build -warnaserror
+```
+
+## Run
+With Docker (API + PostgreSQL):
+```bash
+docker compose up --build
+```
+- Swagger UI: http://localhost:8080/swagger
+- OpenAPI document: http://localhost:8080/openapi/v1.json
+- Health: http://localhost:8080/health/live, http://localhost:8080/health/ready
+
+Locally against the compose database:
+```bash
+docker compose up -d postgres
+dotnet run --project src/Scheduler.Api --launch-profile http
+```
+Swagger UI is then at http://localhost:5080/swagger.
+
+## Test
+```bash
+dotnet test
+```
+Integration tests start a disposable PostgreSQL 16 container, so Docker must be running.
+Sample requests are in `http/scheduler.http`.
 
 ## AI Collaboration Narrative
 _Written in the final step. The step-by-step record is in `docs/ai-collaboration-log.md`._

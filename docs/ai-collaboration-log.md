@@ -33,3 +33,48 @@ attributes, assumptions, GenAI usage in design), `AGENTS.md` and this log.
   store names, and verification claims that had not happened yet).
 
 **Verification:** _(to fill in: how I reviewed `SPEC.md` against the Keyloop brief)_
+
+## Step 1: solution skeleton
+
+**Prompt summary:** Plan for step 1 of SPEC §13 presented by the AI (files, assumptions, open
+questions) and approved before any file was created.
+
+**What the AI generated:** `.slnx` solution, central package management, 4 src projects and
+2 test projects, `Program.cs` (Controllers, Serilog JSON, OpenTelemetry, health checks,
+OpenAPI + Swagger UI, correlation id middleware), database health check, Dockerfile,
+docker-compose, `.http` stub, README build/run/test section.
+Tests: correlation id unit tests; integration tests for `/health/live`, `/health/ready`
+(real PostgreSQL via Testcontainers), correlation id echo and the OpenAPI document.
+
+**Notes for review:**
+- The AI's environment had no .NET SDK or NuGet access, so it could not build or run tests.
+  Package versions in `Directory.Packages.props` were chosen without checking NuGet and are
+  confirmed by the first restore on my machine.
+- No extra packages: the database health check uses `NpgsqlDataSource` directly, and Npgsql
+  tracing/metrics use its built-in "Npgsql" source instead of an instrumentation package.
+
+**Dependency audit on first restore** (Visual Studio restore on my machine, read back from
+`obj/project.assets.json`; NU190x are build errors per SPEC §3):
+
+| Advisory | Package (as chosen by the AI) | Fix applied |
+|---|---|---|
+| GHSA-rvv3-g6hj-g44x (high) | AutoMapper 14.0.0 | Fixed only in 15.1.1 / 16.1.1 (commercial). Package removed from step 1 (not used yet) and raised as **OQ-15** instead of suppressing the warning |
+| GHSA-v5pm-xwqc-g5wc (high) | Microsoft.OpenApi 2.0.0 (transitive) | Pinned to 2.7.5 |
+| GHSA-g94r-2vxg-569j, GHSA-4625-4j76-fww9 (moderate) | OpenTelemetry.Api / OTLP exporter 1.12.0 | OpenTelemetry packages to 1.15.3 |
+| GHSA-mggc-4xg6-vcxf, GHSA-q939-rpr3-3284 (high) | SSH.NET 2024.2.0 (via Testcontainers 4.6.0) | Testcontainers 4.14.0 and SSH.NET pinned to 2026.0.0 |
+
+Second restore: no audit warnings, all versions resolved.
+
+Lesson: the AI picked package versions from memory; the audit gate in `Directory.Build.props`
+caught four vulnerable dependencies before any code ran. The AutoMapper finding overturns an
+earlier design decision, so it goes back to me as an open question rather than being patched over.
+
+**First build on my machine** (`dotnet build -warnaserror`): 5 of 6 projects green;
+`Scheduler.IntegrationTests` failed with CS0618: `PostgreSqlBuilder()` is obsolete in
+Testcontainers 4.14 (the version bump from the audit fix). Fixed by passing the image to the
+constructor: `new PostgreSqlBuilder("postgres:16-alpine")`. Warnings-as-errors caught an API
+deprecation the AI did not anticipate when it bumped the package.
+
+**What I corrected and why:** _(to fill in after review)_
+
+**Verification:** _(paste `dotnet build` and `dotnet test` results here)_

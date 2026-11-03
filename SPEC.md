@@ -520,7 +520,8 @@ Each step: build green, all tests green, one commit with message `step N: <summa
 | OQ-11 | Apply seed data in every environment? | Dev | Keyloop | Deferred | Yes for the assessment; separate script in real deployment | - |
 | OQ-12 | Do all dealerships offer all service types? | Dev | Keyloop | Deferred | Yes (A-10) | - |
 | OQ-13 | Scope and lifetime of idempotency keys? | AI | Dev | Resolved | Global, no expiry (A-11) | - |
-| OQ-14 | Hand-written mapping, Mapperly or AutoMapper? | AI | Dev | Resolved | AutoMapper 14.x for developer familiarity, limited to the Api layer and guarded by a configuration-validity test (§11, §12) | - |
+| OQ-14 | Hand-written mapping, Mapperly or AutoMapper? | AI | Dev | Resolved | AutoMapper 14.x for developer familiarity, limited to the Api layer and guarded by a configuration-validity test (§11, §12). Reopened by OQ-15 | - |
+| OQ-15 | First restore: AutoMapper 14.0.0 has a high-severity advisory (GHSA-rvv3-g6hj-g44x) fixed only in 15.1.1 / 16.1.1, which need a commercial license key. NU190x must not be suppressed (§3). Use licensed AutoMapper 15.1.1+, Mapperly, or hand-written mapping? | AI | Dev | Open | - | §13 step 5 (mapping) |
 
 Rules:
 - Status values: `Open`, `Resolved`, `Deferred` (Deferred = reasonable assumption taken, documented in §15

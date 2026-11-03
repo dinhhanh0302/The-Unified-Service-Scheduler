@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- SPEC §3: Application references Domain only, no NuGet packages (BCL only). -->
+  <PropertyGroup>
+    <RootNamespace>Scheduler.Application</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Scheduler.Domain\Scheduler.Domain.csproj" />
+  </ItemGroup>
+</Project>
