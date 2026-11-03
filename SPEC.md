@@ -419,7 +419,7 @@ Frontend is out of scope (Keyloop Part 2: client layer stubbed). Stubs:
   - Application use cases return Application DTOs; controllers map them to API responses with `IMapper`
   - All profiles live in `Scheduler.Api/Mapping`; one profile per resource (`AppointmentProfile`, `ReferenceDataProfile`)
   - Request → command mapping stays explicit (`request.ToCommand(idempotencyKey)`), because it carries header values and must be obvious when reviewing validation
-  - Domain entities are never a mapping destination; they are built through constructors / factory methods that enforce invariants (e.g. `End = Start + Duration`)
+  - Domain entities are never a mapping destination; they are built through constructors / factory methods that enforce invariants (e.g. `End = Start + Duration`). Where EF Core cannot bind a constructor (enum-array columns), a `private` parameterless constructor exists for materialisation only
   - UTC → dealership-local time conversion happens in the Application DTO, not in AutoMapper resolvers, so business logic stays out of the mapping layer
   - No `Ignore()` on response members without a comment explaining why
 

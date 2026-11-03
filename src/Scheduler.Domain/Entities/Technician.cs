@@ -22,6 +22,13 @@ public sealed class Technician
         IsActive = isActive;
     }
 
+    /// <summary>For EF Core materialisation only: values are set from the database row afterwards.</summary>
+    private Technician()
+    {
+        FullName = string.Empty;
+        Qualifications = [];
+    }
+
     public Guid Id { get; }
 
     public Guid DealershipId { get; }

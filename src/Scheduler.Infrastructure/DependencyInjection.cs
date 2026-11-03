@@ -1,7 +1,9 @@
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 using Scheduler.Infrastructure.Health;
+using Scheduler.Infrastructure.Persistence;
 
 namespace Scheduler.Infrastructure;
 
@@ -25,6 +27,13 @@ public static class DependencyInjection
 
             return NpgsqlDataSource.Create(connectionString);
         });
+
+        services.AddDbContext<SchedulerDbContext>((sp, options) =>
+            options.UseNpgsql(sp.GetRequiredService<NpgsqlDataSource>()));
+
+        // Schema and seed data are applied on start-up (SPEC §3, OQ-11).
+        services.AddSingleton<DatabaseMigrator>();
+        services.AddHostedService<DatabaseMigrationHostedService>();
 
         services.AddHealthChecks()
             .AddCheck<DatabaseHealthCheck>("database", tags: [HealthTags.Ready]);

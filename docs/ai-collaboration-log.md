@@ -108,3 +108,37 @@ Unit tests tagged with AC/BR ids: TimeSlot, BookingPolicy, Appointment, Availabi
 file 14:13:02), and `dotnet test` passed, including the domain unit tests (reported by me; console
 output not captured).
 
+## Step 3: infrastructure
+
+**Prompt summary:** AI presented the step 3 plan (schema, seed, migrator, EF mapping, DB-level
+tests); approved as proposed.
+
+**What the AI generated:** `0001_initial_schema.sql` (tables, FKs, checks, `btree_gist`, the three
+named exclusion constraints, partial unique index on `idempotency_key`, day-snapshot index),
+`0002_seed_data.sql` (D1 per SPEC §7, D2 for cross-dealership tests, 4 service types,
+customers, vehicles) with matching `SeedIds`, `DatabaseMigrator` (embedded scripts, once each,
+one transaction, advisory lock) run by a hosted service, `SchedulerDbContext` with explicit
+snake_case configurations and enum-array converters.
+Integration tests: exclusion constraints per resource (bay, technician, vehicle), back-to-back
+allowed, cancelled rows not blocking, 10 concurrent transactions → exactly 1 commit,
+migrations applied and idempotent, seed matches SPEC §7, EF round trip of every entity.
+
+**Notes for review:**
+- Migrations run from an `IHostedService`, not from code after `builder.Build()` in Program.cs:
+  `WebApplicationFactory` aborts the entry point right after the host is built, so code placed
+  there would never run in integration tests.
+- EF Core binds most immutable entities through their public constructors. `Dealership` and
+  `Technician` expose enum lists that EF cannot bind that way, so they gained a private
+  parameterless constructor for materialisation only (documented in SPEC §11); the time zone is
+  resolved lazily after EF sets `TimeZoneId`.
+- FK relationships are declared in EF (without navigations) only so EF orders inserts correctly;
+  the schema itself is owned by the SQL scripts.
+- The round-trip test books an appointment in 2030 so the cancellation rule never depends on the
+  date the tests run.
+
+**What I corrected and why:** _(to fill in after review)_
+
+**Verification:** on my machine, Docker running: `dotnet build -warnaserror` succeeded (15.0 s);
+`dotnet test --logger "trx;LogFilePrefix=step3"`: total 77, failed 0, succeeded 77, skipped 0
+(13.7 s). Includes the database-level proof of BR-11 (10 concurrent transactions, 1 commit).
+

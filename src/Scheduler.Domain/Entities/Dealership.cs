@@ -3,7 +3,7 @@ namespace Scheduler.Domain.Entities;
 /// <summary>A service workshop. Owns the opening hours and the time zone they are evaluated in (BR-05).</summary>
 public sealed class Dealership
 {
-    private readonly TimeZoneInfo _timeZone;
+    private TimeZoneInfo? _timeZone;
 
     public Dealership(
         Guid id,
@@ -27,8 +27,17 @@ public sealed class Dealership
         OpeningTime = openingTime;
         ClosingTime = closingTime;
         OpenDays = openDays.Distinct().Order().ToArray();
-        // IANA ids (e.g. "Asia/Ho_Chi_Minh") resolve on Windows and Linux in .NET 6+.
+        // IANA ids (e.g. "Asia/Ho_Chi_Minh") resolve on Windows and Linux in .NET 6+. Resolving here
+        // validates the id up front.
         _timeZone = TimeZoneInfo.FindSystemTimeZoneById(timeZoneId);
+    }
+
+    /// <summary>For EF Core materialisation only: values are set from the database row afterwards.</summary>
+    private Dealership()
+    {
+        Name = string.Empty;
+        TimeZoneId = string.Empty;
+        OpenDays = [];
     }
 
     public Guid Id { get; }
@@ -44,15 +53,17 @@ public sealed class Dealership
 
     public IReadOnlyList<DayOfWeek> OpenDays { get; }
 
+    private TimeZoneInfo Zone => _timeZone ??= TimeZoneInfo.FindSystemTimeZoneById(TimeZoneId);
+
     public bool IsOpenOn(DayOfWeek day) => OpenDays.Contains(day);
 
     /// <summary>The instant expressed with the dealership's local offset.</summary>
-    public DateTimeOffset ToLocal(DateTimeOffset instant) => TimeZoneInfo.ConvertTime(instant, _timeZone);
+    public DateTimeOffset ToLocal(DateTimeOffset instant) => TimeZoneInfo.ConvertTime(instant, Zone);
 
     public DateOnly LocalDateOf(DateTimeOffset instant) => DateOnly.FromDateTime(ToLocal(instant).DateTime);
 
     /// <summary>True when the instant falls in a local hour that occurs twice (DST fall-back).</summary>
-    public bool IsAmbiguousLocalTime(DateTimeOffset instant) => _timeZone.IsAmbiguousTime(instant);
+    public bool IsAmbiguousLocalTime(DateTimeOffset instant) => Zone.IsAmbiguousTime(instant);
 
     /// <summary>
     /// Converts a local date and time to UTC. Returns null when the local time does not exist
@@ -61,11 +72,11 @@ public sealed class Dealership
     public DateTimeOffset? ToUtc(DateOnly localDate, TimeOnly localTime)
     {
         var local = localDate.ToDateTime(localTime, DateTimeKind.Unspecified);
-        if (_timeZone.IsInvalidTime(local) || _timeZone.IsAmbiguousTime(local))
+        if (Zone.IsInvalidTime(local) || Zone.IsAmbiguousTime(local))
         {
             return null;
         }
 
-        return new DateTimeOffset(local, _timeZone.GetUtcOffset(local)).ToUniversalTime();
+        return new DateTimeOffset(local, Zone.GetUtcOffset(local)).ToUniversalTime();
     }
 }

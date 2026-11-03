@@ -3,7 +3,7 @@
 Backend API for booking dealership service appointments with real-time bay and technician
 availability (Keyloop Technical Assessment, Scenario A).
 
-> **Status:** step 2 of `SPEC.md` §13 (domain model and business rules). Business endpoints arrive in later steps.
+> **Status:** step 3 of `SPEC.md` §13 (persistence: schema, exclusion constraints, seed data). Business endpoints arrive in later steps.
 
 ## Repository contents
 | File | Purpose |
@@ -48,6 +48,12 @@ Swagger UI is then at http://localhost:5080/swagger.
 dotnet test
 ```
 Integration tests start a disposable PostgreSQL 16 container, so Docker must be running.
+To keep a record of the results:
+```bash
+dotnet test --logger "trx;LogFilePrefix=run"
+```
+The database schema and seed data are applied automatically on start-up (`DatabaseMigrator`);
+seed ids are listed in `src/Scheduler.Infrastructure/Persistence/SeedIds.cs`.
 Sample requests are in `http/scheduler.http`.
 
 ## AI Collaboration Narrative

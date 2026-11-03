@@ -45,7 +45,7 @@ only the .NET base library, so the business logic is fully unit-testable.
 | `AvailabilityEngine` | Pure function: given a service type, a resource snapshot and a slot, returns a bay + technician or nothing; also enumerates free start times |
 | `BookingPolicy` | Time rules: 15-minute alignment, booking horizon (60 min – 60 days), opening hours in the dealership time zone |
 | `AppointmentStore` / `ReferenceDataStore` | Queries and inserts; translates PostgreSQL constraint errors into typed results by constraint name |
-| `DatabaseMigrator` | Applies embedded, forward-only SQL scripts and seed data on start-up |
+| `DatabaseMigrator` | Applies embedded, forward-only SQL scripts and seed data on start-up, each once, in one transaction under a PostgreSQL advisory lock (safe when several instances start together) |
 | PostgreSQL | Source of truth; exclusion constraints enforce no overlap per bay, technician and vehicle |
 
 ## 4. Data Model
@@ -142,7 +142,7 @@ technician must yield exactly 1 × 201 and 9 × 409.
 |---|---|
 | Scalability | Stateless API, integrity enforced in the database, so instances scale horizontally; queries bounded to one dealership and one day |
 | Performance | One snapshot query per booking attempt instead of one query per slot; allocation is in-memory; targeted index plus GiST constraint indexes; targets to be verified with k6 (SPEC §10) |
-| Reliability | Exclusion constraints make double-booking impossible; retries on concurrent conflicts; idempotent POST via `Idempotency-Key`; DB errors never surface as 500; readiness probe |
+| Reliability | Exclusion constraints make double-booking impossible; retries on concurrent conflicts; idempotent POST via `Idempotency-Key`; DB errors never surface as 500; migrations under an advisory lock; readiness probe |
 | Maintainability | Clean Architecture boundaries, package-free Domain/Application, thin controllers, requirement IDs (FR/BR/AC) traced into tests and commits, central package management, `AGENTS.md` for consistent AI-assisted changes |
 | Observability | Structured logs with correlation id, business metrics, distributed traces, health endpoints (section 8) |
 | Security | Input validated at the boundary, parameterised queries only, no secrets in code (env vars), dependency audit as build errors, no PII in logs. Authentication is out of scope (A-07) |

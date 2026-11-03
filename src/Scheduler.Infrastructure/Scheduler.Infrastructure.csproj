@@ -14,6 +14,15 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Forward-only SQL migrations, applied by DatabaseMigrator in file-name order -->
+    <EmbeddedResource Include="Persistence\Migrations\*.sql" LogicalName="Migrations.%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Scheduler.IntegrationTests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\Scheduler.Application\Scheduler.Application.csproj" />
     <ProjectReference Include="..\Scheduler.Domain\Scheduler.Domain.csproj" />
   </ItemGroup>
