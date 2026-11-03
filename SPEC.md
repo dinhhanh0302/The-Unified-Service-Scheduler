@@ -60,7 +60,7 @@ Version: 1.0 | Owner: Duong Dinh Hanh | Last updated: 2026-11-03 | Status: Appro
 | API docs | `Microsoft.AspNetCore.OpenApi` (OpenAPI 3.1) + Swagger UI | First-party document generation; serves as client contract stub |
 | Testing | xUnit, FluentAssertions, Testcontainers (PostgreSQL), WebApplicationFactory, Coverlet | Real DB in integration tests |
 | Load test | k6 script in `perf/` (external tool, not a NuGet package) | Verifies §10 performance targets |
-| Object mapping | AutoMapper 14.x (last MIT-licensed release), Api layer only | Team familiarity; removes hand-written DTO → response mapping. Version pinned; 15+ requires a commercial license key |
+| Object mapping | AutoMapper 16.x, Api layer only, no license key (OQ-15) | Team familiarity; removes hand-written DTO → response mapping. 14.x is vulnerable (GHSA-rvv3-g6hj-g44x). Without a key AutoMapper works and logs a licence warning; production use needs a key (free Community licence below $5M revenue) |
 | Packaging | Docker Compose (api + postgres) | One-command run |
 
 Constraints:
@@ -440,16 +440,16 @@ Frontend is out of scope (Keyloop Part 2: client layer stubbed). Stubs:
 | FR-01, FR-03, FR-04 | AC-01.1, AC-01.2, AC-01.21 | AvailabilityEngineTests, AppointmentTests, BookAppointmentHandlerTests, BookAppointmentApiTests |
 | FR-02, BR-02 – BR-04 | AC-01.3 – AC-01.7, AC-01.10 | AvailabilityEngineTests, TimeSlotTests, BookAppointmentApiTests |
 | BR-10 | AC-01.8, AC-01.9 | AvailabilityEngineTests |
-| BR-05, BR-06 | AC-01.11 – AC-01.14 | BookingPolicyTests, BookAppointmentApiTests |
+| BR-05, BR-06 | AC-01.11 – AC-01.14 | BookingPolicyTests, BookAppointmentHandlerTests, BookAppointmentApiTests |
 | BR-07 | AC-01.15, AC-01.16 | BookingPolicyTests, BookAppointmentValidatorTests, BookAppointmentApiTests |
 | BR-08 | AC-01.17 | BookAppointmentHandlerTests, BookAppointmentApiTests |
 | BR-09 | AC-01.18 | BookAppointmentHandlerTests, BookAppointmentApiTests |
 | FR-01 | AC-01.19, AC-01.20 | BookAppointmentValidatorTests, BookAppointmentApiTests |
 | BR-11 | AC-02.1 – AC-02.3 | BookAppointmentHandlerTests (retry), ConcurrencyTests |
-| FR-05 | AC-05.1 – AC-05.3 | AvailabilityEngineTests, BookAppointmentApiTests |
+| FR-05 | AC-05.1 – AC-05.3 | AvailabilityEngineTests, BookAppointmentHandlerTests, BookAppointmentApiTests |
 | FR-06 | AC-06.1 – AC-06.5 | AvailabilityEngineTests, AvailabilityApiTests |
 | FR-07, BR-12 | AC-07.1 – AC-07.4 | AppointmentTests, CancelAppointmentHandlerTests, LifecycleApiTests |
-| FR-08 | AC-08.1 – AC-08.4 | BookAppointmentHandlerTests, IdempotencyApiTests |
+| FR-08 | AC-08.1 – AC-08.4 | BookAppointmentHandlerTests, BookAppointmentValidatorTests, IdempotencyApiTests |
 
 Keep this matrix in sync with actual test names; update it in the same commit as the tests.
 
@@ -521,8 +521,8 @@ Each step: build green, all tests green, one commit with message `step N: <summa
 | OQ-11 | Apply seed data in every environment? | Dev | Keyloop | Deferred | Yes for the assessment; separate script in real deployment | - |
 | OQ-12 | Do all dealerships offer all service types? | Dev | Keyloop | Deferred | Yes (A-10) | - |
 | OQ-13 | Scope and lifetime of idempotency keys? | AI | Dev | Resolved | Global, no expiry (A-11) | - |
-| OQ-14 | Hand-written mapping, Mapperly or AutoMapper? | AI | Dev | Resolved | AutoMapper 14.x for developer familiarity, limited to the Api layer and guarded by a configuration-validity test (§11, §12). Reopened by OQ-15 | - |
-| OQ-15 | First restore: AutoMapper 14.0.0 has a high-severity advisory (GHSA-rvv3-g6hj-g44x) fixed only in 15.1.1 / 16.1.1, which need a commercial license key. NU190x must not be suppressed (§3). Use licensed AutoMapper 15.1.1+, Mapperly, or hand-written mapping? | AI | Dev | Open | - | §13 step 5 (mapping) |
+| OQ-14 | Hand-written mapping, Mapperly or AutoMapper? | AI | Dev | Resolved | AutoMapper for developer familiarity, limited to the Api layer and guarded by a configuration-validity test (§11, §12). Version decided in OQ-15 | - |
+| OQ-15 | First restore: AutoMapper 14.0.0 has a high-severity advisory (GHSA-rvv3-g6hj-g44x) fixed only in 15.1.1 / 16.1.1, which need a commercial license key. NU190x must not be suppressed (§3). Use licensed AutoMapper 15.1.1+, Mapperly, or hand-written mapping? | AI | Dev | Resolved | AutoMapper 16.2.0 without a license key for the assessment: functions normally, logs a licence warning; a key (or a switch to Mapperly) is required before production | - |
 
 Rules:
 - Status values: `Open`, `Resolved`, `Deferred` (Deferred = reasonable assumption taken, documented in §15

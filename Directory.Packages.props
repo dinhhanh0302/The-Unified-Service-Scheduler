@@ -8,7 +8,9 @@
   <ItemGroup Label="API">
     <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.0" />
     <PackageVersion Include="Swashbuckle.AspNetCore.SwaggerUI" Version="9.0.6" />
-    <!-- AutoMapper removed pending SPEC OQ-15: 14.0.0 has GHSA-rvv3-g6hj-g44x (high), fixed only in 15.1.1 / 16.1.1 -->
+    <!-- SPEC OQ-15: 16.x fixes GHSA-rvv3-g6hj-g44x (14.0.0 is vulnerable). Used without a license key:
+         works normally and logs a licence warning; a key is needed for production use. -->
+    <PackageVersion Include="AutoMapper" Version="16.2.0" />
   </ItemGroup>
 
   <ItemGroup Label="Data">

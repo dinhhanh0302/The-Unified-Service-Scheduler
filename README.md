@@ -3,7 +3,7 @@
 Backend API for booking dealership service appointments with real-time bay and technician
 availability (Keyloop Technical Assessment, Scenario A).
 
-> **Status:** step 3 of `SPEC.md` §13 (persistence: schema, exclusion constraints, seed data). Business endpoints arrive in later steps.
+> **Status:** step 4 of `SPEC.md` §13 (booking use case). HTTP endpoints arrive in step 5.
 
 ## Repository contents
 | File | Purpose |

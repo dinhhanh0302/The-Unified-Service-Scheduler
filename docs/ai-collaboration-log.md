@@ -142,3 +142,40 @@ migrations applied and idempotent, seed matches SPEC §7, EF round trip of every
 `dotnet test --logger "trx;LogFilePrefix=step3"`: total 77, failed 0, succeeded 77, skipped 0
 (13.7 s). Includes the database-level proof of BR-11 (10 concurrent transactions, 1 commit).
 
+## Step 4: application (booking use case)
+
+**Prompt summary:** AI presented the step 4 plan; approved. OQ-15 (mapping library) still open,
+needed before step 5.
+
+**What the AI generated:** ports `IReferenceDataStore` / `IAppointmentStore` and `InsertResult`
+(the database outcome per constraint), `AppointmentDto` (times converted to the dealership's
+offset), `BookAppointmentValidator` (steps 1–2 of the error order: all field errors at once,
+then explicit offset and 15-minute alignment), `RequestHasher` (SHA-256 over a canonical request,
+start hashed as a UTC instant), `BookAppointmentHandler` (steps 3–9: idempotency replay / reuse,
+not-found order, ownership, horizon, opening hours, vehicle overlap, allocation, insert with up to
+3 attempts on bay/technician conflicts, no retry on vehicle conflict, replay of a concurrent
+winner on key conflict, 409 with same-day suggestions), `ValidationFailedError` and
+`SlotUnavailableError` (errors that carry data; `DomainError` unsealed for this).
+Unit tests with in-memory fake stores that can simulate constraint conflicts on the next insert.
+
+**Decision during this step (OQ-15):** AutoMapper 16.2.0 without a license key. Checked before
+applying: 16.x contains the fix for GHSA-rvv3-g6hj-g44x; without a key the library works normally
+and only logs a warning (category `LuckyPennySoftware.AutoMapper.License`); production needs a key
+(free Community licence for organisations under $5M revenue). API changes to handle in step 5:
+`MapperConfiguration` now needs an `ILoggerFactory`, and `AddAutoMapper` requires a config action.
+
+**Notes for review:**
+- No `AddApplication()` extension in the Application project: `IServiceCollection` lives in a NuGet
+  package and SPEC §3 keeps Application BCL-only. Handlers are registered in the Api in step 5.
+- `StartTime` reaches the validator as the raw string so "missing offset" (INVALID_START_TIME,
+  OQ-09) can be told apart from "malformed date" (VALIDATION_FAILED).
+- Retrying is only meaningful because the snapshot is re-read on each attempt: another bay or
+  technician may still be free after a conflict.
+
+**What I corrected and why:** _(to fill in after review)_
+
+**Verification:** on my machine: `dotnet build -warnaserror` succeeded (17.1 s), including the
+restore of AutoMapper 16.2.0 with the NuGet audit as an error gate (no advisories);
+`dotnet test --logger "trx;LogFilePrefix=step4"`: total 110, failed 0, succeeded 110, skipped 0
+(15.7 s), up from 77 in step 3.
+

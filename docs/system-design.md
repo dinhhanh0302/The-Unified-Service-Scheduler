@@ -120,7 +120,7 @@ technician must yield exactly 1 × 201 and 9 × 409.
 | PostgreSQL 16 | SQL Server, MongoDB | Native range types and exclusion constraints solve the core no-overlap problem declaratively; open source, easy to run in Docker |
 | EF Core + Npgsql | Dapper | Productive mapping and LINQ; raw SQL used where EF cannot express the schema |
 | SQL-script migrations | EF Core migrations | Exclusion constraints are raw SQL anyway; scripts are short, reviewable and testable in `psql` |
-| AutoMapper 14.x (MIT), Api layer only | Hand-written mapping, Mapperly | Familiar to the developer; its main risk (silent mapping errors) is covered by a configuration-validity test |
+| AutoMapper 16.x, Api layer only | Hand-written mapping, Mapperly | Familiar to the developer; its main risk (silent mapping errors) is covered by a configuration-validity test. 14.x has a high-severity advisory; 16.x runs without a key (licence warning in logs) for the assessment, a key is needed in production |
 | Direct use-case injection | MediatR | Four use cases do not justify a mediator; direct calls are easier to read and debug |
 | Hand-written validation | FluentValidation | Single request type; keeps core projects package-free |
 | Serilog (compact JSON) | Built-in console logger | Structured logs with correlation id, ready for log aggregation |
