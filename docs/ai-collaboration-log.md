@@ -179,3 +179,200 @@ restore of AutoMapper 16.2.0 with the NuGet audit as an error gate (no advisorie
 `dotnet test --logger "trx;LogFilePrefix=step4"`: total 110, failed 0, succeeded 110, skipped 0
 (15.7 s), up from 77 in step 3.
 
+## Step 5: API (book and read appointments)
+
+**Prompt summary:** AI presented the step 5 plan, including the choice to keep database conflict
+mapping in step 6 as SPEC §13 orders it; approved as proposed.
+
+**What the AI generated:** EF stores (`ReferenceDataStore`, `AppointmentStore`: one query per
+resource type for the day snapshot, vehicle bookings across dealerships, idempotency lookup),
+`GetAppointmentHandler` (FR-04) and a shared `AppointmentDtoLoader`, `AppointmentsController`
+(POST with `Idempotency-Key`, 201 + Location, `Idempotency-Replayed` on replay; GET by id),
+request / response contracts, `AppointmentProfile` (AutoMapper 16), `ProblemResults` (the error
+catalog in one place, ProblemDetails with `code`, `correlationId`, `errors`, `suggestedStartTimes`),
+`ValidationProblemFactory` (framework 400s such as an invalid GUID become VALIDATION_FAILED),
+enum values serialised as strings, `INTERNAL_ERROR` code on 500s, sample requests in `.http`.
+Tests: AutoMapper configuration validity and mapping, error catalog → status for every code,
+API tests for AC-01.1 – 01.3, 01.6, 01.11, 01.13, 01.15 – 01.21 and the correlation id in errors.
+
+**Notes for review:**
+- API tests freeze "now" (`FixedTimeProvider` via `ConfigureTestServices`) at the SPEC §7 instant.
+- Each API test builds its own dealership, bays, technicians, customer and vehicle: the ACs all
+  book "Tuesday 09:00", so sharing seed data would make tests block each other through the
+  exclusion constraints.
+- Known gap until step 6: two truly concurrent requests for the same bay can make the loser get a
+  500 (the constraint holds, but its violation is not yet mapped to 409).
+
+**What I corrected and why:** _(to fill in after review)_
+
+**Verification:** on my machine: `dotnet build -warnaserror` succeeded (12.6 s);
+`dotnet test --logger "trx;LogFilePrefix=step5"`: total 149, failed 0, succeeded 149, skipped 0
+(11.2 s), up from 110 in step 4.
+
+## Step 6: concurrency and observability
+
+**Prompt summary:** AI presented the step 6 plan with its reasoning for why AC-02.2 always yields
+exactly two successes within three attempts and why AC-02.3 always ends in
+VEHICLE_ALREADY_BOOKED; approved as proposed.
+
+**What the AI generated:** `AppointmentStore.InsertAsync` now maps `PostgresException` by SQLSTATE
+and constraint name (bay, technician, vehicle, idempotency key, deadlock) and clears the change
+tracker after a conflict; `InsertResult` split per constraint so metrics can tag it;
+`SchedulerInstrumentation` (BCL `Meter` / `ActivitySource` named "Scheduler"):
+`scheduler.booking.requests{result}`, `scheduler.booking.duration`,
+`scheduler.concurrency.conflicts{constraint}` and an `AvailabilityEngine.Allocate` span per attempt.
+Tests: store-level mapping per constraint and recovery in the same scope; parallel HTTP tests for
+AC-02.1 (10 requests, 1 bay → 1×201, 9×409), AC-02.2 (2 bays → 2×201, no shared bay or
+technician), AC-02.3 (same vehicle → 1×201, 4×409 VEHICLE_ALREADY_BOOKED), none returning 500;
+MeterListener tests for every result tag and the conflict tag.
+
+**Notes for review:**
+- Handler tests and instrumentation tests share one xUnit collection: the meter is process-wide,
+  so running them sequentially keeps the metric assertions exact.
+- Unknown database errors still throw (→ 500 with `INTERNAL_ERROR` and correlation id): only the
+  conflicts the design expects are turned into results.
+
+**First run: 162/164, two concurrency tests red.** AC-02.1 passed, but AC-02.2 (8 of 10
+requests) and AC-02.3 (2 of 5) returned 500 instead of 409. The server logs captured in the
+`.trx` file showed the cause: `40P01 deadlock detected`, wrapped by EF Core in
+`InvalidOperationException("…likely due to a transient failure")` around the
+`DbUpdateException`. The store only inspected `DbUpdateException.InnerException`, so deadlocks
+escaped the mapping. Deadlocks appear once two resources are contended: each insert checks three
+exclusion constraints, and two waiting transactions can block each other across the bay and
+technician indexes. AC-02.1 (one bay, one technician) never produced the cycle, which is why it
+passed. Fix: search the whole inner-exception chain for the `PostgresException`. The tests were
+not changed; they caught a real defect.
+
+**Second run: 162/164, still red, no more 500s but wrong answers.** AC-02.2 booked only one of
+the two bays and took 29 s; AC-02.3 answered SLOT_UNAVAILABLE instead of VEHICLE_ALREADY_BOOKED.
+The AI's plan had assumed conflicts resolve cleanly in "rounds"; in reality the losing inserts
+deadlocked against each other again and again (each detection costs about 1 s), so requests used up
+their three attempts on deadlocks while a bay was still free. Integrity was never broken (no double
+booking), but the outcome depended on timing, and more retries would only hide it.
+
+**Design change (approved by me before it was made):** each allocation attempt now runs in one
+transaction holding `pg_advisory_xact_lock(dealership, local day)`, via a new store method
+`AllocateAndInsertAsync` that calls back into the handler for the allocation decision, so the
+business logic stays in Application. Same dealership-day requests are serialised; exclusion
+constraints remain the final guarantee. SPEC §10 and SDD §6 updated, including why "retries alone"
+was rejected. The tests were again left unchanged.
+
+**Third run: 163/164.** All three API concurrency tests (AC-02.1 – 02.3) green. The remaining
+failure was the step 3 database test with 10 raw concurrent transactions: still exactly one commit,
+but none of the nine losers reported 23P01 (run time about 9 s, consistent with deadlock detection).
+This test does not touch application code and had passed in step 3, so it was timing-dependent.
+Following SPEC §17 the AI stopped and explained instead of editing the test.
+
+**Test correction (approved by me):** the test asserted something PostgreSQL does not promise.
+Under concurrency it guarantees a single winner, but a loser can be rejected by the exclusion
+constraint (23P01) or by deadlock detection (40P01). The assertion now requires exactly one commit,
+nine rejections that are each 23P01 or 40P01 (anything else still fails), and one row in the
+table, and it prints every outcome on failure. This is the only test changed in step 6, and it was
+changed because its expectation was wrong, not to make code pass.
+
+**What I corrected and why:** _(to fill in after review)_
+
+**Verification:** fourth run on my machine (`dotnet test --logger "trx;LogFilePrefix=step6d"`,
+read back from the `.trx` files): unit tests 122/122, integration tests 42/42, total 164/164.
+AC-02.2 now completes in 0.10 s (29 s with retries alone), AC-02.3 in 0.09 s, AC-02.1 in 1.5 s,
+the raw 10-transaction database test in 0.04 s.
+
+## Fix: local run against the compose database
+
+**Symptom:** `dotnet run` (Development) crashed at start-up in `DatabaseMigrator`:
+`28P01: password authentication failed for user "scheduler"`. Tests were unaffected because
+Testcontainers maps a random free port.
+
+**Cause:** the Development connection string pointed at `localhost:5432`, the same host port the
+compose file published. With a PostgreSQL already installed on the machine, `localhost:5432` reaches
+that server, which has no `scheduler` user with this password.
+
+**Fix:** compose publishes PostgreSQL on host port 5433 and `appsettings.Development.json` uses 5433.
+The API container still talks to `postgres:5432` on the compose network. README updated.
+
+## Steps 7–9: availability, cancellation, idempotency over HTTP, reference data
+
+**Prompt summary:** I asked the AI to implement all remaining functional requirements in one go
+instead of one plan per step. The code was written and verified together, and committed as one
+commit: the three steps share changes (store interfaces, test fakes), so splitting them would
+have produced intermediate commits that do not build.
+
+**What the AI generated:**
+- Step 7 (FR-06): `GetAvailabilityHandler` (validation, not-found, engine, local offsets),
+  `AvailabilityController` (`GET /api/v1/availability`), mapping, unit and API tests AC-06.1 – 06.5.
+- Step 8 (FR-07, FR-08): `CancelAppointmentHandler`, `POST /appointments/{id}/cancel`,
+  `IAppointmentStore.UpdateAsync` with optimistic concurrency on PostgreSQL `xmin` (new AC-07.5: two
+  parallel cancels → one 200, one 409), unit and API tests AC-07.1 – 07.5, API tests AC-08.1 – 08.4.
+  Handler change: when a request with an `Idempotency-Key` fails, the key is checked once more
+  before answering, because a concurrent identical request may have committed in between and
+  caused the failure (it would otherwise answer VEHICLE_ALREADY_BOOKED to a retry of a booking that
+  succeeded). Found while reasoning about AC-08.4 under the new per-dealership-day lock.
+- Step 9 (FR-09): list methods on `IReferenceDataStore`, `ReferenceDataQueries`,
+  `ReferenceDataController` (`/dealerships`, `/service-types`, `/customers/{id}/vehicles`), mapping
+  with enums as names, API tests; the mapping test now loads every profile like Program.cs does.
+- SPEC: AC-07.5, §10 notes on the idempotency re-check and cancel row version, traceability rows.
+
+**What I corrected and why:** _(to fill in after review)_
+
+**Verification:** on my machine: `dotnet build -warnaserror` succeeded (9.8 s);
+`dotnet test --logger "trx;LogFilePrefix=step7to9"`: total 199, failed 0, succeeded 199, skipped 0
+(8.4 s), up from 164 in step 6, first run green.
+
+## Step 10–11: completeness review, missing API tests, load script, final documentation
+
+**Prompt summary:** I asked the AI whether the code was ready to submit. It answered no and listed
+the gaps against SPEC §14 and the Keyloop brief; I accepted its plan for the parts it could do.
+
+**What the AI generated:**
+- Review result: every AC in SPEC §7 had a test, but 8 Must ACs were covered only by unit tests,
+  while the Definition of Done asks for an API-level test for each. Added to
+  `BookAppointmentApiTests`: AC-01.4 (technician busy for part of the window), AC-01.5 (only free
+  technician unqualified), AC-01.7 (only free bay of the wrong type), AC-01.8 (least booked
+  minutes wins), AC-01.9 (lowest bay name wins), AC-01.10 (inactive resources ignored), AC-01.12
+  (Sunday), AC-01.14 (61 days ahead). `ApiTestData` gained helpers to add bays and technicians.
+- `perf/booking.k6.js`: availability 20 req/s and booking 10 req/s for 30 s with the SPEC §10
+  p95 targets as thresholds; 409/422 counted as expected answers.
+- README rewritten: quick start, tests and filters, cURL examples, concurrency summary,
+  observability, performance section, a draft of the AI Collaboration Narrative.
+- SPEC (revision entry for the changes made during implementation, Definition of Done ticked
+  only where evidence exists) and final status in the System Design Document.
+
+**Not done by the AI (open):** `docker compose up --build` on a clean machine, the k6 run and its
+numbers, my review of the narrative and of the "What I corrected and why" entries, the video.
+
+**Verification:** on my machine: `dotnet test --logger "trx;LogFilePrefix=final"` (warnings as
+errors via `Directory.Build.props`): build succeeded (8.6 s); total 207, failed 0, succeeded 207,
+skipped 0 (7.3 s), up from 199; the 8 new API tests were green on the first run.
+
+## Note on commit history
+
+SPEC §13 asks for one commit per step named `step N: <summary>`. Steps 0–4 follow it. Steps 5–11 are
+one commit (`steps 5-11: ...`), squashed at my request: step 6 needed a follow-up fix (port clash),
+steps 7–9 share store interfaces and test fakes so separate commits did not each build on their own,
+and steps 10–11 plus the removal of the custom metrics and OpenTelemetry changed the same files again.
+
+## Change: custom metrics, span and OpenTelemetry removed
+
+**Prompt summary:** after reviewing what the observability code was for, I checked the Keyloop brief:
+it asks for an observability *strategy* and for observability to be considered, with no specific
+metrics or latency numbers. I decided to remove the custom instrumentation and keep the design simpler.
+
+**What the AI changed:**
+- Removed `SchedulerInstrumentation` (`scheduler.booking.requests`, `scheduler.booking.duration`,
+  `scheduler.concurrency.conflicts`, `AvailabilityEngine.Allocate` span), its calls in
+  `BookAppointmentHandler`, `SchedulerTelemetry`, and their registration with OpenTelemetry.
+- Removed `BookAppointmentInstrumentationTests` (5 tests of the removed metrics) and the xUnit
+  collection that only existed to isolate the shared meter. No other test changed.
+- Kept: Serilog JSON logs with correlation id, OpenTelemetry built-in ASP.NET Core and Npgsql
+  metrics and traces, health endpoints.
+- SPEC (§10, revision entry), SDD §8/§9 and README updated. While doing so the AI found that SPEC §10 and SDD §8
+  described log fields (`dealershipId`, `appointmentId`, booking outcomes) that the code never wrote;
+  the documents now describe what the code does.
+
+Follow-up decision: I also removed OpenTelemetry. With no exporter configured by default it did
+nothing visible in a `docker compose up` run, and its four packages had needed security pins. Removed
+the packages, `ObservabilityExtensions`, the `Telemetry` setting, the OTLP comment in compose and the
+`Activity` tag in `CorrelationIdMiddleware`. The SDD now describes OpenTelemetry as the production path,
+and request logs (status, elapsed time, correlation id) as the implemented signal.
+
+**Verification:** _(pending: build and test run; expected 202 tests = 207 − 5)_

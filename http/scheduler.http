@@ -14,3 +14,121 @@ GET {{baseUrl}}/openapi/v1.json
 ### Correlation id is echoed back
 GET {{baseUrl}}/health/live
 X-Correlation-Id: demo-request-001
+
+# ---------------------------------------------------------------------------
+# Appointments (seed data: src/Scheduler.Infrastructure/Persistence/SeedIds.cs)
+# Pick a start time 1 hour – 60 days ahead, on a 15-minute boundary, Mon–Sat 08:00–17:00 local.
+# ---------------------------------------------------------------------------
+@d1 = d1000000-0000-0000-0000-000000000001
+@customerAn = c0000000-0000-0000-0000-000000000001
+@vehicleAnAccord = ae000000-0000-0000-0000-000000000001
+@vehicleBinhModel3 = ae000000-0000-0000-0000-000000000003
+@oilChange = 5e000000-0000-0000-0000-000000000001
+@start = 2026-12-22T09:00:00+07:00
+
+### Book an oil change (201 Created; repeat to get 409 SLOT_UNAVAILABLE only when every Lift bay is taken)
+# @name book
+POST {{baseUrl}}/api/v1/appointments
+Content-Type: application/json
+X-Correlation-Id: demo-book-001
+
+{
+  "customerId": "{{customerAn}}",
+  "vehicleId": "{{vehicleAnAccord}}",
+  "dealershipId": "{{d1}}",
+  "serviceTypeId": "{{oilChange}}",
+  "startTime": "{{start}}",
+  "notes": "Strange noise from front left wheel"
+}
+
+### Read the appointment just created
+GET {{baseUrl}}/api/v1/appointments/{{book.response.body.$.id}}
+
+### 409 VEHICLE_ALREADY_BOOKED: same vehicle, overlapping window
+POST {{baseUrl}}/api/v1/appointments
+Content-Type: application/json
+
+{
+  "customerId": "{{customerAn}}",
+  "vehicleId": "{{vehicleAnAccord}}",
+  "dealershipId": "{{d1}}",
+  "serviceTypeId": "{{oilChange}}",
+  "startTime": "2026-12-22T09:30:00+07:00"
+}
+
+### 422 VEHICLE_NOT_OWNED: Binh's car booked by An
+POST {{baseUrl}}/api/v1/appointments
+Content-Type: application/json
+
+{
+  "customerId": "{{customerAn}}",
+  "vehicleId": "{{vehicleBinhModel3}}",
+  "dealershipId": "{{d1}}",
+  "serviceTypeId": "{{oilChange}}",
+  "startTime": "{{start}}"
+}
+
+### 400 INVALID_START_TIME: not on a 15-minute boundary
+POST {{baseUrl}}/api/v1/appointments
+Content-Type: application/json
+
+{
+  "customerId": "{{customerAn}}",
+  "vehicleId": "{{vehicleAnAccord}}",
+  "dealershipId": "{{d1}}",
+  "serviceTypeId": "{{oilChange}}",
+  "startTime": "2026-12-22T09:10:00+07:00"
+}
+
+### 400 VALIDATION_FAILED: missing fields
+POST {{baseUrl}}/api/v1/appointments
+Content-Type: application/json
+
+{ "notes": "no ids" }
+
+### 404 APPOINTMENT_NOT_FOUND
+GET {{baseUrl}}/api/v1/appointments/00000000-0000-0000-0000-000000000000
+
+# ---------------------------------------------------------------------------
+# Availability (FR-06)
+# ---------------------------------------------------------------------------
+### Open start times for an oil change on a day
+GET {{baseUrl}}/api/v1/availability?dealershipId={{d1}}&serviceTypeId={{oilChange}}&date=2026-12-22
+
+### Sunday: closed, empty list
+GET {{baseUrl}}/api/v1/availability?dealershipId={{d1}}&serviceTypeId={{oilChange}}&date=2026-12-20
+
+# ---------------------------------------------------------------------------
+# Cancellation (FR-07) and idempotency (FR-08)
+# ---------------------------------------------------------------------------
+### Cancel the appointment booked above (run "Book an oil change" first)
+POST {{baseUrl}}/api/v1/appointments/{{book.response.body.$.id}}/cancel
+
+### Cancel again: 409 APPOINTMENT_NOT_CANCELLABLE
+POST {{baseUrl}}/api/v1/appointments/{{book.response.body.$.id}}/cancel
+
+### Idempotent booking: send twice, the second answer carries Idempotency-Replayed: true and the same id
+POST {{baseUrl}}/api/v1/appointments
+Content-Type: application/json
+Idempotency-Key: demo-key-001
+
+{
+  "customerId": "{{customerAn}}",
+  "vehicleId": "ae000000-0000-0000-0000-000000000002",
+  "dealershipId": "{{d1}}",
+  "serviceTypeId": "{{oilChange}}",
+  "startTime": "2026-12-22T13:00:00+07:00"
+}
+
+# ---------------------------------------------------------------------------
+# Reference data (FR-09)
+# ---------------------------------------------------------------------------
+### Dealerships
+GET {{baseUrl}}/api/v1/dealerships
+
+### Service types
+GET {{baseUrl}}/api/v1/service-types
+
+### Vehicles of a customer
+GET {{baseUrl}}/api/v1/customers/{{customerAn}}/vehicles
+

@@ -114,8 +114,15 @@ public sealed class ExclusionConstraintTests(SchedulerApiFactory factory)
             }
         }));
 
-        outcomes.Count(o => o == "committed").Should().Be(1);
-        outcomes.Count(o => o == PostgresErrorCodes.ExclusionViolation).Should().Be(9);
+        // PostgreSQL guarantees a single winner, but a loser may be rejected either by the exclusion
+        // constraint (23P01) or by deadlock detection (40P01) when waiting inserts block each other.
+        var report = string.Join(", ", outcomes);
+        outcomes.Count(o => o == "committed").Should().Be(1, "exactly one insert may win; outcomes: {0}", report);
+        outcomes.Where(o => o != "committed").Should()
+            .HaveCount(9)
+            .And.OnlyContain(
+                o => o == PostgresErrorCodes.ExclusionViolation || o == PostgresErrorCodes.DeadlockDetected,
+                "losers must be rejected by the constraint or by deadlock detection; outcomes: {0}", report);
         (await Data.CountConfirmedAsync(bay)).Should().Be(1);
     }
 }

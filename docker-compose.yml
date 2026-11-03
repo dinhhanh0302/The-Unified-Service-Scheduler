@@ -8,7 +8,8 @@ services:
       POSTGRES_USER: scheduler
       POSTGRES_PASSWORD: scheduler
     ports:
-      - "5432:5432"
+      # Host port 5433, not 5432, so it never collides with a PostgreSQL installed locally on the machine.
+      - "5433:5432"
     volumes:
       - scheduler-db:/var/lib/postgresql/data
     healthcheck:
@@ -24,8 +25,6 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Development
       ConnectionStrings__Scheduler: "Host=postgres;Port=5432;Database=scheduler;Username=scheduler;Password=scheduler"
-      # Uncomment to export traces/metrics to an OTLP collector:
-      # OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"
     ports:
       - "8080:8080"
     depends_on:

@@ -16,4 +16,10 @@ public interface IReferenceDataStore
     Task<Technician?> GetTechnicianAsync(Guid id, CancellationToken cancellationToken);
 
     Task<ServiceBay?> GetServiceBayAsync(Guid id, CancellationToken cancellationToken);
+
+    Task<IReadOnlyList<Dealership>> ListDealershipsAsync(CancellationToken cancellationToken);
+
+    Task<IReadOnlyList<ServiceType>> ListServiceTypesAsync(CancellationToken cancellationToken);
+
+    Task<IReadOnlyList<Vehicle>> ListVehiclesByCustomerAsync(Guid customerId, CancellationToken cancellationToken);
 }

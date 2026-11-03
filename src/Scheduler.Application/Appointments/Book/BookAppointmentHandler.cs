@@ -40,6 +40,25 @@ public sealed class BookAppointmentHandler(
             }
         }
 
+        var result = await BookValidatedAsync(booking, requestHash, cancellationToken);
+
+        // A concurrent request with the same key may have committed while this one was running; its
+        // booking then blocks this one (vehicle overlap, no free bay). Answer with the original instead.
+        if (result.IsFailure && booking.IdempotencyKey is { } retriedKey)
+        {
+            var replay = await TryReplayAsync(retriedKey, requestHash, cancellationToken);
+            if (replay is not null)
+            {
+                return replay;
+            }
+        }
+
+        return result;
+    }
+
+    private async Task<Result<BookingResult>> BookValidatedAsync(
+        ValidatedBooking booking, string requestHash, CancellationToken cancellationToken)
+    {
         // 4. Referenced entities exist, in the order customer → vehicle → dealership → service type.
         var customer = await referenceData.GetCustomerAsync(booking.CustomerId, cancellationToken);
         if (customer is null)
@@ -99,31 +118,41 @@ public sealed class BookAppointmentHandler(
 
         for (var attempt = 1; attempt <= MaxAttempts; attempt++)
         {
-            snapshot = await appointments.GetDaySnapshotAsync(dealership, localDate, cancellationToken);
-            var allocation = AvailabilityEngine.Allocate(dealership, serviceType, slot, snapshot);
-            if (allocation is null)
+            Allocation? allocation = null;
+
+            // Snapshot, allocation and insert run under the store's per-dealership-day lock.
+            var outcome = await appointments.AllocateAndInsertAsync(dealership, localDate, daySnapshot =>
+            {
+                allocation = AvailabilityEngine.Allocate(dealership, serviceType, slot, daySnapshot);
+
+                return allocation is null
+                    ? null
+                    : Appointment.Confirm(
+                        Guid.NewGuid(),
+                        customer.Id,
+                        vehicle.Id,
+                        dealership.Id,
+                        serviceType,
+                        allocation,
+                        booking.Start,
+                        booking.Notes,
+                        now,
+                        booking.IdempotencyKey,
+                        requestHash);
+            }, cancellationToken);
+
+            snapshot = outcome.Snapshot;
+            if (outcome is not { Appointment: { } appointment, Result: { } inserted }
+                || allocation is not { } chosen)
             {
                 break;
             }
 
-            var appointment = Appointment.Confirm(
-                Guid.NewGuid(),
-                customer.Id,
-                vehicle.Id,
-                dealership.Id,
-                serviceType,
-                allocation,
-                booking.Start,
-                booking.Notes,
-                now,
-                booking.IdempotencyKey,
-                requestHash);
-
-            switch (await appointments.InsertAsync(appointment, cancellationToken))
+            switch (inserted)
             {
                 case InsertResult.Success:
                     return new BookingResult(
-                        AppointmentDto.From(appointment, dealership, vehicle, serviceType, allocation.Technician, allocation.Bay),
+                        AppointmentDto.From(appointment, dealership, vehicle, serviceType, chosen.Technician, chosen.Bay),
                         Replayed: false);
 
                 case InsertResult.VehicleConflict:
@@ -135,11 +164,11 @@ public sealed class BookAppointmentHandler(
                            ?? throw new InvalidOperationException(
                                "Idempotency key conflict reported, but no appointment holds the key.");
 
-                case InsertResult.ResourceConflict:
+                case InsertResult.BayConflict or InsertResult.TechnicianConflict or InsertResult.Deadlock:
                     continue;
 
                 default:
-                    throw new InvalidOperationException("Unknown insert result.");
+                    throw new InvalidOperationException($"Unknown insert result {inserted}.");
             }
         }
 
@@ -166,28 +195,7 @@ public sealed class BookAppointmentHandler(
             return DomainErrors.IdempotencyKeyReused;
         }
 
-        var dto = await LoadDtoAsync(existing, cancellationToken);
+        var dto = await AppointmentDtoLoader.LoadAsync(referenceData, existing, cancellationToken);
         return new BookingResult(dto, Replayed: true);
     }
-
-    private async Task<AppointmentDto> LoadDtoAsync(Appointment appointment, CancellationToken cancellationToken)
-    {
-        var dealership = await referenceData.GetDealershipAsync(appointment.DealershipId, cancellationToken);
-        var vehicle = await referenceData.GetVehicleAsync(appointment.VehicleId, cancellationToken);
-        var serviceType = await referenceData.GetServiceTypeAsync(appointment.ServiceTypeId, cancellationToken);
-        var technician = await referenceData.GetTechnicianAsync(appointment.TechnicianId, cancellationToken);
-        var bay = await referenceData.GetServiceBayAsync(appointment.ServiceBayId, cancellationToken);
-
-        // Foreign keys guarantee these rows exist for a stored appointment.
-        return AppointmentDto.From(
-            appointment,
-            dealership ?? throw MissingReference(nameof(Dealership)),
-            vehicle ?? throw MissingReference(nameof(Vehicle)),
-            serviceType ?? throw MissingReference(nameof(ServiceType)),
-            technician ?? throw MissingReference(nameof(Technician)),
-            bay ?? throw MissingReference(nameof(ServiceBay)));
-    }
-
-    private static InvalidOperationException MissingReference(string entity) =>
-        new($"{entity} referenced by a stored appointment was not found.");
 }

@@ -1,11 +1,10 @@
-using System.Diagnostics;
 using Serilog.Context;
 
 namespace Scheduler.Api.Middleware;
 
 /// <summary>
 /// Reads X-Correlation-Id (or generates one), exposes it as HttpContext.TraceIdentifier,
-/// echoes it on the response and attaches it to every log entry and the current trace (SPEC §10).
+/// echoes it on the response and attaches it to every log entry (SPEC §10).
 /// </summary>
 public sealed class CorrelationIdMiddleware(RequestDelegate next)
 {
@@ -23,8 +22,6 @@ public sealed class CorrelationIdMiddleware(RequestDelegate next)
             context.Response.Headers[HeaderName] = correlationId;
             return Task.CompletedTask;
         });
-
-        Activity.Current?.SetTag(LogPropertyName, correlationId);
 
         using (LogContext.PushProperty(LogPropertyName, correlationId))
         {

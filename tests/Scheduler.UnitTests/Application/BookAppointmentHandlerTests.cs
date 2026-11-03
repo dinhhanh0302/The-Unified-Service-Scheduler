@@ -212,11 +212,14 @@ public sealed class BookAppointmentHandlerTests
 
     // ---- Concurrency: retry on constraint conflicts (SPEC §10) ----
 
-    [Fact]
+    [Theory]
+    [InlineData(InsertResult.BayConflict)]
+    [InlineData(InsertResult.TechnicianConflict)]
+    [InlineData(InsertResult.Deadlock)]
     [Trait("BR", "BR-11")]
-    public async Task Handle_ResourceConflictOnFirstInsert_RetriesAndSucceeds()
+    public async Task Handle_ResourceConflictOnFirstInsert_RetriesAndSucceeds(InsertResult conflict)
     {
-        _stores.ForcedInsertResults.Enqueue(InsertResult.ResourceConflict);
+        _stores.ForcedInsertResults.Enqueue(conflict);
 
         var result = await Handler.HandleAsync(Command());
 
@@ -231,7 +234,7 @@ public sealed class BookAppointmentHandlerTests
     {
         for (var i = 0; i < BookAppointmentHandler.MaxAttempts; i++)
         {
-            _stores.ForcedInsertResults.Enqueue(InsertResult.ResourceConflict);
+            _stores.ForcedInsertResults.Enqueue(InsertResult.BayConflict);
         }
 
         var result = await Handler.HandleAsync(Command());
@@ -304,6 +307,19 @@ public sealed class BookAppointmentHandlerTests
 
         retry.IsSuccess.Should().BeTrue();
         retry.Value.Replayed.Should().BeFalse();
+    }
+
+    [Fact]
+    [Trait("AC", "AC-08.4")]
+    public async Task Handle_SameKeyCommittedAfterInitialLookup_ReplaysInsteadOfVehicleConflict()
+    {
+        var first = await Handler.HandleAsync(Command(idempotencyKey: "K4"));
+        _stores.IdempotencyLookupsToMiss = 1; // the retry's first lookup runs before the original commits
+
+        var retry = await Handler.HandleAsync(Command(idempotencyKey: "K4"));
+
+        retry.Value.Replayed.Should().BeTrue();
+        retry.Value.Appointment.Id.Should().Be(first.Value.Appointment.Id);
     }
 
     [Fact]

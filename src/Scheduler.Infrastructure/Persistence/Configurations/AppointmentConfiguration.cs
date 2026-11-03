@@ -33,6 +33,9 @@ internal sealed class AppointmentConfiguration : IEntityTypeConfiguration<Appoin
 
         builder.Ignore(a => a.Slot);
 
+        // Optimistic concurrency for updates (cancel): PostgreSQL's xmin system column as row version.
+        builder.Property<uint>("Version").HasColumnName("xmin").HasColumnType("xid").IsRowVersion();
+
         // Foreign keys (no navigations) so EF orders inserts correctly; the schema itself comes from SQL.
         builder.HasOne<Customer>().WithMany().HasForeignKey(a => a.CustomerId).OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<Vehicle>().WithMany().HasForeignKey(a => a.VehicleId).OnDelete(DeleteBehavior.Restrict);

@@ -1,6 +1,6 @@
 # System Design: Unified Service Scheduler
 
-Status: Design approved, implementation in progress | Author: Duong Dinh Hanh | Scenario A – The Unified Service Scheduler | Implemented layer: **Backend** (REST API + PostgreSQL); client stubbed with OpenAPI, Swagger UI, `.http` file and cURL | Related: [SPEC.md](../SPEC.md)
+Status: Implemented (all Must/Should requirements of SPEC §6) | Author: Duong Dinh Hanh | Scenario A – The Unified Service Scheduler | Implemented layer: **Backend** (REST API + PostgreSQL); client stubbed with OpenAPI, Swagger UI, `.http` file and cURL | Related: [SPEC.md](../SPEC.md)
 
 ## 1. Overview
 Dealerships need a single place to book service appointments. A booking is only valid when the
@@ -31,7 +31,7 @@ flowchart LR
   UC -->|IAppointmentStore, IReferenceDataStore| STORE
   STORE --> DB[(PostgreSQL 16<br/>exclusion constraints)]
   MIG --> DB
-  API -. logs / metrics / traces .-> OTEL[stdout JSON logs<br/>OTLP collector]
+  API -. JSON logs .-> LOGS[stdout<br/>log aggregation]
 ```
 Clean Architecture: Domain has no dependencies, Application depends only on Domain and defines the
 store ports, Infrastructure implements them, Api composes everything. Domain and Application use
@@ -40,7 +40,7 @@ only the .NET base library, so the business logic is fully unit-testable.
 ## 3. Components
 | Component | Responsibility |
 |---|---|
-| `Scheduler.Api` | Thin controllers (`AppointmentsController`, `AvailabilityController`, `ReferenceDataController`), request binding, mapping DTOs to responses (AutoMapper), mapping domain errors to ProblemDetails (400/404/409/422), correlation id, health checks, OpenAPI 3.1, Serilog and OpenTelemetry wiring |
+| `Scheduler.Api` | Thin controllers (`AppointmentsController`, `AvailabilityController`, `ReferenceDataController`), request binding, mapping DTOs to responses (AutoMapper), mapping domain errors to ProblemDetails (400/404/409/422), correlation id, health checks, OpenAPI 3.1, Serilog wiring |
 | `BookAppointmentHandler` | Orchestrates a booking: validate → load references → policy checks → allocate → persist → retry on concurrent conflict → suggestions; idempotency |
 | `AvailabilityEngine` | Pure function: given a service type, a resource snapshot and a slot, returns a bay + technician or nothing; also enumerates free start times |
 | `BookingPolicy` | Time rules: 15-minute alignment, booking horizon (60 min – 60 days), opening hours in the dealership time zone |
@@ -82,12 +82,13 @@ sequenceDiagram
   H->>H: ownership, horizon, opening hours (local time zone)
   H->>S: vehicle overlap?
   loop up to 3 attempts
-    H->>S: snapshot (bays, technicians, confirmed appointments of the day)
-    H->>E: Allocate(serviceType, snapshot, slot)
-    E-->>H: bay + technician, or none
-    H->>S: INSERT appointment
-    S->>DB: INSERT
-    DB-->>S: OK / 23P01 exclusion violation
+    H->>S: AllocateAndInsert(dealership, local day)
+    S->>DB: BEGIN; pg_advisory_xact_lock(dealership, day)
+    S->>DB: snapshot (bays, technicians, confirmed appointments of the day)
+    S->>E: Allocate(serviceType, snapshot, slot)
+    E-->>S: bay + technician, or none
+    S->>DB: INSERT; COMMIT (or ROLLBACK)
+    DB-->>S: OK / 23P01 exclusion violation / 23505 idempotency key
   end
   H-->>A: AppointmentDto or Error (+ suggested start times)
   A-->>C: 201 Created / 4xx ProblemDetails
@@ -100,10 +101,20 @@ and both insert. The design therefore splits responsibilities:
   errors and suggestions.
 - **Database guarantee** (exclusion constraints): the second conflicting insert fails atomically with
   SQLSTATE `23P01`, no matter how many API instances run.
-- **Recovery**: on `23P01` for a bay or technician (or a `40P01` deadlock) the handler re-reads the
-  snapshot and tries the remaining resources, up to 3 attempts, then returns 409 with suggestions.
-  A `23P01` on the vehicle constraint returns `VEHICLE_ALREADY_BOOKED` without retry.
+- **Serialisation per dealership-day**: snapshot, allocation and insert run in one transaction holding a
+  PostgreSQL advisory lock for (dealership, local day). Requests for the same dealership and day queue
+  for a few milliseconds instead of racing, so every request allocates from the latest state and
+  concurrent inserts cannot deadlock. Other dealerships and days are unaffected.
+- **Recovery**: on `23P01` for a bay or technician (or a `40P01` deadlock), which can now only come from
+  writers outside the lock, the handler re-reads the snapshot and tries again, up to 3 attempts, then
+  returns 409 with suggestions. A `23P01` on the vehicle constraint returns `VEHICLE_ALREADY_BOOKED`
+  without retry.
 - **Idempotency**: a unique partial index on `idempotency_key` plus a request hash makes client retries safe.
+
+Why not rely on retries alone? That was the first implementation. Under parallel requests for two or
+more resources, inserts that each check three exclusion constraints deadlocked repeatedly (about 1 s
+each to detect); requests used up their retries and got the wrong answer (only one of two bays booked,
+or SLOT_UNAVAILABLE instead of VEHICLE_ALREADY_BOOKED). Integrity held, but outcomes depended on timing.
 
 Why not a version column checked in the API? A version protects an *existing* row being updated;
 here the conflict is between two *inserts* of new rows, and a check in the API server is a
@@ -124,27 +135,26 @@ technician must yield exactly 1 × 201 and 9 × 409.
 | Direct use-case injection | MediatR | Four use cases do not justify a mediator; direct calls are easier to read and debug |
 | Hand-written validation | FluentValidation | Single request type; keeps core projects package-free |
 | Serilog (compact JSON) | Built-in console logger | Structured logs with correlation id, ready for log aggregation |
-| OpenTelemetry | Vendor SDKs | Vendor-neutral metrics and traces, OTLP export to any backend |
 | Built-in OpenAPI (`Microsoft.AspNetCore.OpenApi`) + Swagger UI | Swashbuckle SwaggerGen | First-party in .NET 10, OpenAPI 3.1; doubles as the client contract stub required by the brief |
 | xUnit + FluentAssertions | NUnit, MSTest | De-facto standard; traits carry AC IDs for traceability |
 | Testcontainers | EF InMemory, SQLite | Only real PostgreSQL can prove the exclusion constraints |
 | Docker Compose | Local installs | One command to run API + database |
 
 ## 8. Observability Strategy
-- **Logs:** JSON to stdout (Serilog), enriched with `correlationId` (from `X-Correlation-Id` or generated, echoed in the response), request logging, booking outcomes with appointment / dealership ids. No customer PII.
-- **Metrics:** `scheduler.booking.requests{result}`, `scheduler.booking.duration` (ms), `scheduler.concurrency.conflicts{constraint}`, plus ASP.NET Core and Npgsql instrumentation.
-- **Traces:** HTTP server spans, Npgsql command spans, and a custom `AvailabilityEngine.Allocate` span.
+- **Logs:** JSON to stdout (Serilog), enriched with `correlationId` (from `X-Correlation-Id` or generated, echoed in the response and in error bodies), one request log line per HTTP request. No customer PII.
+- **Request metrics (derived from logs):** every request log line carries method, path, status code and elapsed time, so latency percentiles, error rates and the share of 409 answers per route can be derived by any log aggregation tool, and the correlation id links all lines of one request. No metrics or tracing SDK is included, to keep the solution small.
+- **Production path (not implemented):** add OpenTelemetry with the built-in ASP.NET Core and Npgsql instrumentation (HTTP and SQL spans, `http.server.request.duration`) and an OTLP exporter; no application code changes are needed beyond registration.
 - **Health:** `/health/live` (process) and `/health/ready` (database reachable) for orchestrator probes.
-- **Example alerts:** p95 booking duration > 500 ms for 5 min; `unavailable` ratio spike per dealership (capacity issue); sustained growth of `concurrency.conflicts` (hot slots); readiness failing.
+- **Example alerts:** p95 elapsed time of `POST /api/v1/appointments` > 500 ms for 5 min; rising share of 409 responses on that route (capacity issue or hot slots); any 5xx; readiness failing.
 
 ## 9. Quality Attributes ("Build for the Future")
 | Attribute | How the design addresses it |
 |---|---|
 | Scalability | Stateless API, integrity enforced in the database, so instances scale horizontally; queries bounded to one dealership and one day |
-| Performance | One snapshot query per booking attempt instead of one query per slot; allocation is in-memory; targeted index plus GiST constraint indexes; targets to be verified with k6 (SPEC §10) |
+| Performance | One snapshot query per booking attempt instead of one query per slot; allocation is in-memory; targeted index plus GiST constraint indexes; targets (booking p95 < 500 ms, availability p95 < 300 ms) checked by thresholds in `perf/booking.k6.js`; results in the README |
 | Reliability | Exclusion constraints make double-booking impossible; retries on concurrent conflicts; idempotent POST via `Idempotency-Key`; DB errors never surface as 500; migrations under an advisory lock; readiness probe |
 | Maintainability | Clean Architecture boundaries, package-free Domain/Application, thin controllers, requirement IDs (FR/BR/AC) traced into tests and commits, central package management, `AGENTS.md` for consistent AI-assisted changes |
-| Observability | Structured logs with correlation id, business metrics, distributed traces, health endpoints (section 8) |
+| Observability | Structured JSON logs with correlation id and per-request timing, health endpoints; OpenTelemetry as the documented production path (section 8) |
 | Security | Input validated at the boundary, parameterised queries only, no secrets in code (env vars), dependency audit as build errors, no PII in logs. Authentication is out of scope (A-07) |
 
 ## 10. Future Evolution

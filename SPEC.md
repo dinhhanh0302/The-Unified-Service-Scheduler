@@ -1,10 +1,10 @@
 # SPEC: Unified Service Scheduler (Keyloop Assessment – Scenario A)
-Version: 1.0 | Owner: Duong Dinh Hanh | Last updated: 2026-11-03 | Status: Approved – ready for implementation
+Version: 1.0 | Owner: Duong Dinh Hanh | Last updated: 2026-11-03 | Status: Implemented – final verification pending (see §14)
 
 ## 0. Revision History
 | Version | Date | Change |
 |---|---|---|
-| 1.0 | 2026-11-03 | Initial approved spec for Keyloop Scenario A |
+| 1.0 | 2026-11-03 | Spec for Keyloop Scenario A, including the decisions taken during implementation: AutoMapper 16.2.0 without a key (OQ-15); per dealership-day advisory lock, idempotency re-check and row version on cancel (§10); AC-07.5; `cancelledAtUtc` in the response (§8); observability through structured logs and health checks, with OpenTelemetry as the production path (§10) |
 
 ## 1. Context & Goals
 - **Problem statement:** Dealerships book service appointments manually (phone, spreadsheets),
@@ -36,7 +36,7 @@ Version: 1.0 | Owner: Duong Dinh Hanh | Last updated: 2026-11-03 | Status: Appro
 - Idempotent booking via `Idempotency-Key`
 - Read-only reference data: dealerships, service types, a customer's vehicles
 - Seed data, OpenAPI spec, Swagger UI, `.http` file and cURL examples as client stub
-- Observability: structured logs, metrics, traces, health checks
+- Observability: structured logs with correlation id and request timing, health checks
 
 ### Out of scope (the AI must NOT implement)
 - Frontend UI (stubbed via OpenAPI / Swagger UI and `.http` files)
@@ -56,7 +56,6 @@ Version: 1.0 | Owner: Duong Dinh Hanh | Last updated: 2026-11-03 | Status: Appro
 | Schema migrations | Forward-only SQL scripts, embedded and applied on start-up by `DatabaseMigrator` | Exclusion constraints and range types are raw SQL anyway; scripts are reviewable |
 | Validation | Hand-written `BookAppointmentValidator` | One request type; keeps Domain/Application free of third-party packages |
 | Logging | Serilog (JSON to console) | Structured logs, correlation IDs |
-| Metrics / Tracing | OpenTelemetry (OTLP exporter, console exporter in dev) | Vendor-neutral |
 | API docs | `Microsoft.AspNetCore.OpenApi` (OpenAPI 3.1) + Swagger UI | First-party document generation; serves as client contract stub |
 | Testing | xUnit, FluentAssertions, Testcontainers (PostgreSQL), WebApplicationFactory, Coverlet | Real DB in integration tests |
 | Load test | k6 script in `perf/` (external tool, not a NuGet package) | Verifies §10 performance targets |
@@ -113,11 +112,13 @@ sequenceDiagram
   C->>API: POST /api/v1/appointments (+ Idempotency-Key)
   API->>APP: validated command
   APP->>DB: idempotency lookup (replay if key + hash match)
-  APP->>DB: load dealership, service type, customer, vehicle
+  APP->>DB: load customer, vehicle, dealership, service type
   APP->>APP: BookingPolicy checks (BR-05 – BR-08)
-  APP->>DB: load candidate bays + qualified technicians + their bookings that day
+  APP->>DB: vehicle overlap check (BR-09)
+  APP->>DB: BEGIN; pg_advisory_xact_lock(dealership, local day)
+  APP->>DB: load bays + technicians + their bookings that day
   APP->>APP: AvailabilityEngine picks bay + technician (BR-10)
-  APP->>DB: INSERT appointment (new transaction, READ COMMITTED)
+  APP->>DB: INSERT appointment; COMMIT
   DB-->>APP: OK / 23P01 exclusion violation / 23505 unique violation
   APP-->>API: Confirmed / Replayed / SlotUnavailable / VehicleAlreadyBooked
   API-->>C: 201 / 409 / 422
@@ -269,6 +270,7 @@ Each test arranges its own bays, technicians and bookings unless stated otherwis
 | AC-07.2 | AC-07.1 done | POST a new booking for the same bay/technician/window | 201 |
 | AC-07.3 | Appointment already Cancelled | Cancel again | 409 `APPOINTMENT_NOT_CANCELLABLE` |
 | AC-07.4 | Appointment start is in the past | Cancel | 409 `APPOINTMENT_NOT_CANCELLABLE` |
+| AC-07.5 | A future Confirmed appointment | Two cancel requests in parallel | Exactly one 200, one 409 `APPOINTMENT_NOT_CANCELLABLE` (row version on the appointment) |
 
 ### FR-08: Idempotency
 | ID | Given | When | Then |
@@ -308,7 +310,8 @@ Headers: `Idempotency-Key` (optional, 1–100 chars)
   "startTime": "2026-11-10T09:00:00+07:00",
   "endTime": "2026-11-10T10:00:00+07:00",
   "notes": "Strange noise from front left wheel",
-  "createdAtUtc": "2026-11-09T01:00:00Z"
+  "createdAtUtc": "2026-11-09T01:00:00Z",
+  "cancelledAtUtc": null
 }
 ```
 Times in responses are rendered in the dealership's time zone offset.
@@ -371,7 +374,18 @@ Frontend is out of scope (Keyloop Part 2: client layer stubbed). Stubs:
   | 23P01 on vehicle constraint | No retry | 409 `VEHICLE_ALREADY_BOOKED` |
   | 23505 on idempotency key index | Load existing record; same hash → replay, else reuse error | 201 replay / 422 `IDEMPOTENCY_KEY_REUSED` |
   | 40P01 deadlock | Same as bay/technician conflict | 409 `SLOT_UNAVAILABLE` |
-- These DB errors must never surface as 500.
+- A booking request with an `Idempotency-Key` that fails is checked once more against the key before the
+  error is returned: a concurrent request with the same key may have committed meanwhile and caused the
+  failure (AC-08.4); the original is then replayed.
+- Cancellation uses optimistic concurrency on the appointment row (PostgreSQL `xmin` as row version):
+  of two concurrent cancels one succeeds, the other gets `APPOINTMENT_NOT_CANCELLABLE` (AC-07.5).
+- Each allocation attempt (day snapshot → allocation → insert) runs in one transaction holding
+  `pg_advisory_xact_lock(<dealership key>, <local day>)`, so bookings for the same dealership and day are
+  serialised: every request sees the latest snapshot, and concurrent inserts cannot deadlock across the
+  three exclusion-constraint indexes. Different dealerships and days still run in parallel. The exclusion
+  constraints stay the final guarantee; retries remain for the rare cross-dealership vehicle conflict.
+- These DB errors must never surface as 500. EF Core wraps some of them (e.g. 40P01) in
+  `InvalidOperationException`, so the whole inner-exception chain is inspected.
 - Idempotency records are stored only for successful bookings (the key lives on the appointment row).
   Failed requests store nothing, so a retry is re-evaluated (AC-08.3). Keys are global and do not expire (A-11).
 
@@ -388,13 +402,11 @@ Frontend is out of scope (Keyloop Part 2: client layer stubbed). Stubs:
 
 ### Observability
 - **Logs:** Serilog JSON; every entry carries `correlationId` (from `X-Correlation-Id` or generated),
-  plus `dealershipId`, `appointmentId` where known. No customer PII (name, email, phone) in logs.
-- **Metrics (OpenTelemetry):**
-  - `scheduler.booking.requests{result=confirmed|replayed|unavailable|rejected}` (counter)
-  - `scheduler.booking.duration` ms (histogram, same `result` tag)
-  - `scheduler.concurrency.conflicts{constraint=bay|technician|vehicle}` (counter)
-  - ASP.NET Core and Npgsql built-in instrumentation
-- **Tracing:** spans for HTTP, Npgsql commands, and custom `AvailabilityEngine.Allocate` span
+  one request log line per HTTP request (method, path, status, duration). No customer PII (name, email,
+  phone) in logs.
+- **Metrics / tracing:** not implemented in code (developer decision, recorded in the collaboration log). Request logs carry status and
+  elapsed time per route, from which latency and error rates can be derived; OpenTelemetry is the
+  documented production path (System Design Document §8).
 - **Health:** `/health/live`, `/health/ready` (includes DB)
 
 ### Security
@@ -445,10 +457,11 @@ Frontend is out of scope (Keyloop Part 2: client layer stubbed). Stubs:
 | BR-08 | AC-01.17 | BookAppointmentHandlerTests, BookAppointmentApiTests |
 | BR-09 | AC-01.18 | BookAppointmentHandlerTests, BookAppointmentApiTests |
 | FR-01 | AC-01.19, AC-01.20 | BookAppointmentValidatorTests, BookAppointmentApiTests |
-| BR-11 | AC-02.1 – AC-02.3 | BookAppointmentHandlerTests (retry), ConcurrencyTests |
+| BR-11 | AC-02.1 – AC-02.3 | BookAppointmentHandlerTests (retry), ExclusionConstraintTests, AppointmentStoreConflictTests, ConcurrencyTests |
 | FR-05 | AC-05.1 – AC-05.3 | AvailabilityEngineTests, BookAppointmentHandlerTests, BookAppointmentApiTests |
-| FR-06 | AC-06.1 – AC-06.5 | AvailabilityEngineTests, AvailabilityApiTests |
-| FR-07, BR-12 | AC-07.1 – AC-07.4 | AppointmentTests, CancelAppointmentHandlerTests, LifecycleApiTests |
+| FR-06 | AC-06.1 – AC-06.5 | AvailabilityEngineTests, GetAvailabilityHandlerTests, AvailabilityApiTests |
+| FR-07, BR-12 | AC-07.1 – AC-07.5 | AppointmentTests, CancelAppointmentHandlerTests, LifecycleApiTests |
+| FR-09 | - | MappingConfigurationTests, ReferenceDataApiTests |
 | FR-08 | AC-08.1 – AC-08.4 | BookAppointmentHandlerTests, BookAppointmentValidatorTests, IdempotencyApiTests |
 
 Keep this matrix in sync with actual test names; update it in the same commit as the tests.
@@ -471,23 +484,24 @@ Each step: build green, all tests green, one commit with message `step N: <summa
 
 ## 14. Definition of Done
 ### Code
-- [ ] Solution builds with warnings as errors on a clean machine
-- [ ] `docker compose up` starts API + DB; migrations and seed data applied
-- [ ] `dotnet test` passes, including Testcontainers integration and concurrency tests
-- [ ] Every Must AC has an API-level test; Traceability Matrix matches actual tests
-- [ ] k6 results recorded; targets met or deviations explained
-- [ ] No TODOs in core booking path
+- [x] Solution builds with warnings as errors on a clean machine
+- [ ] `docker compose up` starts API + DB; migrations and seed data applied (to verify on a clean machine)
+- [x] `dotnet test` passes, including Testcontainers integration and concurrency tests
+- [x] Every Must AC has an API-level test; Traceability Matrix matches actual tests
+- [ ] k6 results recorded; targets met or deviations explained (script with thresholds: `perf/booking.k6.js`; not yet run)
+- [x] No TODOs in core booking path
 
 ### Keyloop deliverables
-- [ ] **System Design Document** (`docs/system-design.md`): architecture diagram, component roles,
+- [x] **System Design Document** (`docs/system-design.md`): architecture diagram, component roles,
       data flow, technology list with justifications, observability strategy, assumptions,
       dedicated section on GenAI usage in the design phase
 - [ ] **README.md**: build, run, test instructions; cURL examples; **AI Collaboration Narrative**
       (strategy for guiding the AI, verification and refinement process, how final quality was ensured)
-- [ ] **Test suite** validating core business logic
+      (written; narrative draft awaiting the developer's review)
+- [x] **Test suite** validating core business logic
 - [ ] **Video (5–10 min)**: intro + scenario; design and implementation highlights; AI collaboration
       story (1–2 min); live demo (book, conflict + suggestions, concurrency test run, cancel); lessons and challenges
-- [ ] All Open Questions resolved or covered by a documented Assumption
+- [x] All Open Questions resolved or covered by a documented Assumption
 
 ## 15. Assumptions
 | ID | Assumption | Impact if wrong |

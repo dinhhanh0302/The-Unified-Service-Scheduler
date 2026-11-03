@@ -30,6 +30,21 @@ internal sealed class InMemoryStores : IReferenceDataStore, IAppointmentStore
 
     public int InsertCalls { get; private set; }
 
+    /// <summary>Lets a test simulate a concurrent update (row version changed) on the next update.</summary>
+    public Queue<UpdateResult> ForcedUpdateResults { get; } = new();
+
+    public Task<UpdateResult> UpdateAsync(Appointment appointment, CancellationToken cancellationToken) =>
+        Task.FromResult(ForcedUpdateResults.TryDequeue(out var forced) ? forced : UpdateResult.Success);
+
+    public Task<IReadOnlyList<Dealership>> ListDealershipsAsync(CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<Dealership>>(Dealerships.OrderBy(d => d.Name, StringComparer.Ordinal).ToArray());
+
+    public Task<IReadOnlyList<ServiceType>> ListServiceTypesAsync(CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<ServiceType>>(ServiceTypes.OrderBy(s => s.Code, StringComparer.Ordinal).ToArray());
+
+    public Task<IReadOnlyList<Vehicle>> ListVehiclesByCustomerAsync(Guid customerId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<Vehicle>>(Vehicles.Where(v => v.CustomerId == customerId).ToArray());
+
     public Task<Customer?> GetCustomerAsync(Guid id, CancellationToken cancellationToken) =>
         Task.FromResult(Customers.FirstOrDefault(c => c.Id == id));
 
@@ -48,8 +63,22 @@ internal sealed class InMemoryStores : IReferenceDataStore, IAppointmentStore
     public Task<ServiceBay?> GetServiceBayAsync(Guid id, CancellationToken cancellationToken) =>
         Task.FromResult(Bays.FirstOrDefault(b => b.Id == id));
 
-    public Task<Appointment?> FindByIdempotencyKeyAsync(string idempotencyKey, CancellationToken cancellationToken) =>
-        Task.FromResult(Appointments.FirstOrDefault(a => a.IdempotencyKey == idempotencyKey));
+    public Task<Appointment?> GetByIdAsync(Guid id, CancellationToken cancellationToken) =>
+        Task.FromResult(Appointments.FirstOrDefault(a => a.Id == id));
+
+    /// <summary>Number of upcoming idempotency lookups that miss, to simulate a concurrent request committing late.</summary>
+    public int IdempotencyLookupsToMiss { get; set; }
+
+    public Task<Appointment?> FindByIdempotencyKeyAsync(string idempotencyKey, CancellationToken cancellationToken)
+    {
+        if (IdempotencyLookupsToMiss > 0)
+        {
+            IdempotencyLookupsToMiss--;
+            return Task.FromResult<Appointment?>(null);
+        }
+
+        return Task.FromResult(Appointments.FirstOrDefault(a => a.IdempotencyKey == idempotencyKey));
+    }
 
     public Task<IReadOnlyList<TimeSlot>> GetVehicleBookingsAsync(
         Guid vehicleId, DateTimeOffset fromUtc, DateTimeOffset toUtc, CancellationToken cancellationToken)
@@ -75,6 +104,22 @@ internal sealed class InMemoryStores : IReferenceDataStore, IAppointmentStore
             Bays.Where(b => b.DealershipId == dealership.Id),
             Technicians.Where(t => t.DealershipId == dealership.Id),
             bookings));
+    }
+
+    public async Task<AllocationAttempt> AllocateAndInsertAsync(
+        Dealership dealership,
+        DateOnly localDate,
+        Func<ResourceSnapshot, Appointment?> createAppointment,
+        CancellationToken cancellationToken)
+    {
+        var snapshot = await GetDaySnapshotAsync(dealership, localDate, cancellationToken);
+        var appointment = createAppointment(snapshot);
+        if (appointment is null)
+        {
+            return new AllocationAttempt(snapshot, null, null);
+        }
+
+        return new AllocationAttempt(snapshot, appointment, await InsertAsync(appointment, cancellationToken));
     }
 
     public Task<InsertResult> InsertAsync(Appointment appointment, CancellationToken cancellationToken)

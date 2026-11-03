@@ -2,8 +2,10 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
+using Scheduler.Application.Abstractions;
 using Scheduler.Infrastructure.Health;
 using Scheduler.Infrastructure.Persistence;
+using Scheduler.Infrastructure.Stores;
 
 namespace Scheduler.Infrastructure;
 
@@ -30,6 +32,9 @@ public static class DependencyInjection
 
         services.AddDbContext<SchedulerDbContext>((sp, options) =>
             options.UseNpgsql(sp.GetRequiredService<NpgsqlDataSource>()));
+
+        services.AddScoped<IReferenceDataStore, ReferenceDataStore>();
+        services.AddScoped<IAppointmentStore, AppointmentStore>();
 
         // Schema and seed data are applied on start-up (SPEC §3, OQ-11).
         services.AddSingleton<DatabaseMigrator>();

@@ -1,7 +1,14 @@
+using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Scheduler.Api.ErrorHandling;
+using Scheduler.Api.Mapping;
 using Scheduler.Api.Middleware;
-using Scheduler.Api.Observability;
+using Scheduler.Application.Appointments.Book;
+using Scheduler.Application.Appointments.Cancel;
+using Scheduler.Application.Appointments.Get;
+using Scheduler.Application.Availability;
+using Scheduler.Application.ReferenceData;
 using Scheduler.Infrastructure;
 using Scheduler.Infrastructure.Health;
 using Serilog;
@@ -23,15 +30,35 @@ try
         .WriteTo.Console(new RenderedCompactJsonFormatter()));
 
     // API: Controllers only (SPEC §3, §11)
-    builder.Services.AddControllers();
+    builder.Services.AddControllers()
+        .AddJsonOptions(options => options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter()))
+        .ConfigureApiBehaviorOptions(options =>
+            options.InvalidModelStateResponseFactory = ValidationProblemFactory.Create);
+
+    // Framework-generated problems (unhandled exceptions, 404 without a body...) also carry the correlation id.
     builder.Services.AddProblemDetails(options =>
         options.CustomizeProblemDetails = context =>
+        {
             context.ProblemDetails.Extensions[CorrelationIdMiddleware.LogPropertyName] =
-                context.HttpContext.TraceIdentifier);
+                context.HttpContext.TraceIdentifier;
+            if (context.ProblemDetails.Status == StatusCodes.Status500InternalServerError)
+            {
+                context.ProblemDetails.Extensions["code"] = ProblemResults.InternalErrorCode;
+            }
+        });
     builder.Services.AddOpenApi();
 
-    // Observability and infrastructure
-    builder.Services.AddSchedulerTelemetry(builder.Configuration);
+    // Object mapping (SPEC §3, OQ-15): Api layer only.
+    builder.Services.AddAutoMapper(_ => { }, typeof(AppointmentProfile));
+
+    // Use cases (Application is BCL-only, so they are registered here).
+    builder.Services.AddScoped<BookAppointmentHandler>();
+    builder.Services.AddScoped<GetAppointmentHandler>();
+    builder.Services.AddScoped<CancelAppointmentHandler>();
+    builder.Services.AddScoped<GetAvailabilityHandler>();
+    builder.Services.AddScoped<ReferenceDataQueries>();
+
+    // Infrastructure
     builder.Services.AddSingleton(TimeProvider.System);
     builder.Services.AddInfrastructure();
     builder.Services.AddHealthChecks()
