@@ -77,4 +77,34 @@ deprecation the AI did not anticipate when it bumped the package.
 
 **What I corrected and why:** _(to fill in after review)_
 
-**Verification:** _(paste `dotnet build` and `dotnet test` results here)_
+**Verification:** after the CS0618 fix, a full solution build on my machine (14:13, warnings as
+errors) produced every assembly, including both test projects. `dotnet test` with Docker running:
+all tests passed (reported by me; console output not captured). From step 3 on, test results are
+exported to `TestResults/*.trx` so the counts are recorded.
+
+## Step 2: domain
+
+**Prompt summary:** AI presented the step 2 plan (files, design decisions, new assumption A-12,
+TDD in two passes). I approved it but asked to write tests and implementation in one pass.
+
+**What the AI generated:** BCL-only domain model: enums, immutable entities created through
+constructors (`Appointment.Confirm` enforces End = Start + Duration), `TimeSlot` (half-open),
+`Result<T>` and the error catalog, `BookingPolicy` (BR-05 opening hours in the dealership time
+zone incl. DST, BR-06 horizon, BR-07 alignment) and `AvailabilityEngine` (allocation with BR-10
+tie-breaks, available start times, suggestions that respect the vehicle's other bookings).
+Unit tests tagged with AC/BR ids: TimeSlot, BookingPolicy, Appointment, AvailabilityEngine.
+
+**Notes for review:**
+- Tests and implementation were written together at my request, so there is no "red first" run
+  for this step; the tests are derived from the ACs in SPEC §7, not from the implementation.
+- `AvailabilityEngine` never reads the clock: the booking window is computed from "now" by
+  `BookingPolicy` and passed in, so tests are independent of when they run.
+- Expected-result data for AC-05.1 was designed by hand (bay bookings 08:00–10:00, 11:00–11:15,
+  12:15–13:00) so that 10:00, 11:15 and 13:00 are provably the first free starts after 09:00.
+
+**What I corrected and why:** _(to fill in after review)_
+
+**Verification:** same run as step 1: the 14:13 build compiled all step 2 sources (newest source
+file 14:13:02), and `dotnet test` passed, including the domain unit tests (reported by me; console
+output not captured).
+

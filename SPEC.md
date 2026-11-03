@@ -437,7 +437,7 @@ Frontend is out of scope (Keyloop Part 2: client layer stubbed). Stubs:
 ### Traceability Matrix
 | FR / BR | AC | Test(s) |
 |---|---|---|
-| FR-01, FR-03, FR-04 | AC-01.1, AC-01.2, AC-01.21 | BookAppointmentHandlerTests, BookAppointmentApiTests |
+| FR-01, FR-03, FR-04 | AC-01.1, AC-01.2, AC-01.21 | AvailabilityEngineTests, AppointmentTests, BookAppointmentHandlerTests, BookAppointmentApiTests |
 | FR-02, BR-02 – BR-04 | AC-01.3 – AC-01.7, AC-01.10 | AvailabilityEngineTests, TimeSlotTests, BookAppointmentApiTests |
 | BR-10 | AC-01.8, AC-01.9 | AvailabilityEngineTests |
 | BR-05, BR-06 | AC-01.11 – AC-01.14 | BookingPolicyTests, BookAppointmentApiTests |
@@ -448,7 +448,7 @@ Frontend is out of scope (Keyloop Part 2: client layer stubbed). Stubs:
 | BR-11 | AC-02.1 – AC-02.3 | BookAppointmentHandlerTests (retry), ConcurrencyTests |
 | FR-05 | AC-05.1 – AC-05.3 | AvailabilityEngineTests, BookAppointmentApiTests |
 | FR-06 | AC-06.1 – AC-06.5 | AvailabilityEngineTests, AvailabilityApiTests |
-| FR-07, BR-12 | AC-07.1 – AC-07.4 | CancelAppointmentHandlerTests, LifecycleApiTests |
+| FR-07, BR-12 | AC-07.1 – AC-07.4 | AppointmentTests, CancelAppointmentHandlerTests, LifecycleApiTests |
 | FR-08 | AC-08.1 – AC-08.4 | BookAppointmentHandlerTests, IdempotencyApiTests |
 
 Keep this matrix in sync with actual test names; update it in the same commit as the tests.
@@ -503,6 +503,7 @@ Each step: build green, all tests green, one commit with message `step N: <summa
 | A-09 | A single technician performs the whole job | Different allocation model |
 | A-10 | Every dealership offers every service type | Add dealership–service type mapping and `SERVICE_NOT_OFFERED` error |
 | A-11 | Idempotency keys are global and never expire | Scope keys per customer; add TTL cleanup job |
+| A-12 | BR-10 "booked minutes that day" = total duration of the technician's `Confirmed` appointments on the dealership's local day (technicians belong to one dealership) | Count across dealerships if technicians are shared |
 
 ## 16. Open Questions
 | ID | Question | Raised by | Owner | Status | Decision / Answer | Blocks |

@@ -169,6 +169,7 @@ The brief leaves several rules open. These are the assumptions taken (full table
 | A-09 | A single technician performs the whole job |
 | A-10 | Every dealership offers every service type |
 | A-11 | Idempotency keys are global and never expire |
+| A-12 | "Booked minutes that day" (allocation) counts the technician's confirmed appointments on the dealership's local day |
 | BR-05 | The whole service must fit within opening hours of one day, in the dealership's time zone |
 | BR-06 | Bookings start at least 60 minutes and at most 60 days ahead |
 | BR-07 | Start times align to 15-minute slots; the client must send an explicit UTC offset |
